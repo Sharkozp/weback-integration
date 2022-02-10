@@ -1,0 +1,19 @@
+{
+    "config": {
+        "error": {
+            "cannot_connect": "Cannot connect",
+            "invalid_auth": "Invalid auth",
+            "unknown": "Unknown"
+        },
+        "step": {
+            "user": {
+                "data": {
+                    "password": "Password",
+                    "phone_code": "Phone code",
+                    "username": "Username"
+                },
+                "title": "Weback Integration Configuration"
+            }
+        }
+    }
+}

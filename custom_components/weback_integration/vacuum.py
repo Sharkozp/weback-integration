@@ -1,10 +1,21 @@
 """Support for Weback Weback Vaccums."""
+
 import logging
 import datetime
-
-# from weback_unofficial.client import WebackApi
 import weback_unofficial.vacuum as wb_vacuum
-
+from datetime import timedelta
+from .const import (
+    DOMAIN,
+    SUPPORTED_DEVICES,
+    CONF_PHONE_CODE,
+    CONF_USERNAME,
+    CONF_PASSWORD
+)
+from homeassistant.core import HomeAssistant
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.helpers.icon import icon_for_battery_level
+from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.components.vacuum import (
     SUPPORT_BATTERY,
     SUPPORT_CLEAN_SPOT,
@@ -15,43 +26,70 @@ from homeassistant.components.vacuum import (
     SUPPORT_STOP,
     SUPPORT_TURN_OFF,
     SUPPORT_TURN_ON,
+    SUPPORT_MAP,
+    SUPPORT_PAUSE,
+    SUPPORT_STATE,
     VacuumEntity,
 )
-from homeassistant.helpers.icon import icon_for_battery_level
-from homeassistant.const import CONF_SCAN_INTERVAL
 
-from . import WEBACK_DEVICES, DOMAIN, SCAN_INTERVAL
+from weback_unofficial.client import WebackApi
+from weback_unofficial.vacuum import CleanRobot
 
 _LOGGER = logging.getLogger(__name__)
 
 SUPPORT_WEBACK = (
-    SUPPORT_BATTERY
-    | SUPPORT_RETURN_HOME
-    | SUPPORT_CLEAN_SPOT
-    | SUPPORT_STOP
-    | SUPPORT_TURN_OFF
-    | SUPPORT_TURN_ON
-    | SUPPORT_STATUS
-    | SUPPORT_SEND_COMMAND
-    | SUPPORT_FAN_SPEED
+        SUPPORT_BATTERY
+        | SUPPORT_RETURN_HOME
+        | SUPPORT_CLEAN_SPOT
+        | SUPPORT_PAUSE
+        | SUPPORT_STOP
+        | SUPPORT_TURN_OFF
+        | SUPPORT_TURN_ON
+        | SUPPORT_STATUS
+        | SUPPORT_SEND_COMMAND
+        | SUPPORT_FAN_SPEED
+        | SUPPORT_MAP
+        | SUPPORT_STATE
 )
 
-ATTR_ERROR = "error"
-ATTR_COMPONENT_PREFIX = "component_"
 
-
-def setup_platform(hass, config, add_entities, discovery_info=None):
+async def async_setup_entry(
+        hass: HomeAssistant,
+        config_entry: ConfigEntry,
+        async_add_entities: AddEntitiesCallback
+) -> None:
     """Set up the Weback vacuums."""
-    vacuums = []
-    for device in hass.data[WEBACK_DEVICES]:
-        vacuums.append(WebackVacuum(device, SCAN_INTERVAL))
-    _LOGGER.debug("Adding Weback Vacuums to Home Assistant: %s", vacuums)
-    add_entities(vacuums, True)
+    _LOGGER.debug("Set up the Weback vacuums.")
+    data = hass.data[DOMAIN][config_entry.entry_id]
+    weback_api = WebackApi(
+        data.get(CONF_USERNAME),
+        data.get(CONF_PASSWORD),
+        data.get(CONF_PHONE_CODE)
+    )
+    entities = []
+    devices = await hass.async_add_executor_job(weback_api.device_list)
+
+    _LOGGER.debug("Weback devices: %s", devices)
+
+    for device in devices:
+        device_name = device["Thing_Name"]
+        device_nickname = device["Thing_Nick_Name"]
+        _LOGGER.info("Discovered Weback device %s with nickname %s", device_name, device_nickname)
+
+        # Fetching device description to check if this device is supported by platform
+        description = await hass.async_add_executor_job(weback_api.get_device_description, device_name)
+        if description.get("thingTypeName") not in SUPPORTED_DEVICES:
+            _LOGGER.info("Device not supported by this integration: %s", device_name)
+            continue
+
+        vacuum = CleanRobot(device_name, weback_api, None, description, device_nickname)
+        entities.append(WebackVacuum(vacuum, timedelta(seconds=60)))
+
+    async_add_entities(entities)
 
 
 class WebackVacuum(VacuumEntity):
     """Weback Vacuums such as Neatsvor X500."""
-
     def __init__(self, device: wb_vacuum.CleanRobot, scan_interval: datetime.timedelta):
         """Initialize the Weback Vacuum."""
         self.device = device
@@ -59,13 +97,24 @@ class WebackVacuum(VacuumEntity):
         self.last_fetch = None
         _LOGGER.debug("Vacuum initialized: %s", self.name)
 
+    @property
+    def device_info(self):
+        return DeviceInfo(
+            name=self.device.nickname,
+            manufacturer="WeBack",
+            model=self.device.description.get("attributes").get("sub_type"),
+            identifiers={
+                (DOMAIN, self.device.description.get("defaultClientId"))
+            },
+            hw_version=self.device.description.get("attributes").get("firmware_version")
+        )
+
     def update(self):
         """Update device's state"""
         self.device.update()
 
     def on_error(self, error):
         """Handle an error event from the robot."""
-
         self.hass.bus.fire(
             "weback_error", {"entity_id": self.entity_id, "error": error}
         )
@@ -76,9 +125,7 @@ class WebackVacuum(VacuumEntity):
         """Return True if entity has to be polled for state."""
         if self.last_fetch is None:
             return True
-        if (
-            datetime.datetime.now() - self.last_fetch
-        ).total_seconds() > self.scan_interval.total_seconds():
+        if (datetime.datetime.now() - self.last_fetch).total_seconds() > self.scan_interval.total_seconds():
             return True
         return False
 
@@ -124,9 +171,7 @@ class WebackVacuum(VacuumEntity):
     @property
     def battery_icon(self):
         """Return the battery icon for the vacuum cleaner."""
-        return icon_for_battery_level(
-            battery_level=self.device.battery_level, charging=self.is_charging
-        )
+        return icon_for_battery_level(battery_level=self.device.battery_level, charging=self.is_charging)
 
     @property
     def battery_charging(self):
@@ -146,12 +191,10 @@ class WebackVacuum(VacuumEntity):
     @property
     def fan_speed_list(self):
         """Get the list of available fan speed steps of the vacuum cleaner."""
-
         return [wb_vacuum.FAN_SPEED_NORMAL, wb_vacuum.FAN_SPEED_HIGH]
 
     def turn_on(self, **kwargs):
         """Turn the vacuum on and start cleaning."""
-
         self.device.turn_on()
 
     def turn_off(self, **kwargs):
@@ -176,6 +219,6 @@ class WebackVacuum(VacuumEntity):
         self.device.publish(params)
 
     @property
-    def device_state_attributes(self):
+    def extra_state_attributes(self):
         """Return the device-specific state attributes of this vacuum."""
         return {"raw_state": self.device.current_mode}

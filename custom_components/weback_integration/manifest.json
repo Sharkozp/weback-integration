@@ -1,0 +1,19 @@
+{
+  "domain": "weback_integration",
+  "name": "Weback Integration",
+  "version": "1.0.0",
+  "config_flow": true,
+  "documentation": "https://www.home-assistant.io/integrations/weback_integration",
+  "requirements": [
+    "weback-unofficial==0.3.5"
+  ],
+  "ssdp": [],
+  "zeroconf": [],
+  "homekit": {},
+  "dependencies": [],
+  "codeowners": [
+     "@opravdin",
+     "@Sharkozp"
+  ],
+  "iot_class": "cloud_push"
+}
